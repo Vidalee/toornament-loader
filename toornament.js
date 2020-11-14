@@ -11,9 +11,7 @@ const r = require("rethinkdbdash")({
     port: 28015,
     host: "localhost"
 });
-r.db('GL5').table('matches').delete().run();
-r.db('GL5').table('playersFiltered').delete().run();
-r.db('GL5').table('teams').delete().run();
+
 const config = require("./config.json");
 
 const cookies = config.cookies;
@@ -24,7 +22,7 @@ const api_key = config.toornament_api_key;
 
 const riot_key = config.riot_key;
 const port = 3003;
-const callbackUrl = 'http://vivide.re:3003/callback';
+const callbackUrl = 'http://localhost:3003/callback';
 let token;
 const { AuthorizationCode } = require('simple-oauth2');
 const axios = require('axios');
@@ -46,8 +44,9 @@ app.get('/auth', (req, res) => {
     res.redirect(authorizationUri);
 });
 let match_fails = [];
+let already_done = [];
 // Callback service parsing the authorization token and asking for the access token
-app.get('/callback', async(req, res) => {
+app.get('/callback', async (req, res) => {
     const { code } = req.query;
     const options = {
         code,
@@ -111,6 +110,8 @@ async function getMatches(tournamentId) {
             }
             const response = await axios(config);
             for (let match of response.data) {
+                if (already_done.includes(match.id))
+                    continue;
                 if (match.status != 'completed')
                     continue;
                 const config_games = {
@@ -125,9 +126,8 @@ async function getMatches(tournamentId) {
             array_max = parseInt(response.headers['content-range'].split('/')[1]);
             i += 100;
         } catch (e) {
-	    match_fails.push(tournamentId);
-            console.log("Wrong permissions.", e);
-            return;
+            match_fails.push(tournamentId);
+            console.log("Wrong permissions.");
         }
     }
     return array;
@@ -181,7 +181,7 @@ async function riot_call(match) {
 
 
 async function add_team_info(opponent, player) {
-    await r.db('GL5').table('teams').filter({ name: opponent.name }).run().then(async(response) => {
+    await r.db('GL5').table('teams').filter({ name: opponent.name }).run().then(async (response) => {
         if (response.length == 0) {
             opponent.profileIcon = player.profileIcon;
             opponent.players = [player];
@@ -197,7 +197,7 @@ async function add_team_info(opponent, player) {
 }
 
 async function add_player_info(identity, player_perf, match, i) {
-    await r.db('GL5').table('playersFiltered').filter({ accountId: identity.accountId }).run().then(async(response) => {
+    await r.db('GL5').table('playersFiltered').filter({ accountId: identity.accountId }).run().then(async (response) => {
         if (response.length == 0) {
             identity.region = match.tournament_name.split('-')[1].trim();
             identity.palier = match.tournament_name.split('-')[2].trim();
@@ -226,7 +226,7 @@ async function add_player_info(identity, player_perf, match, i) {
 async function filter_all_games() {
     let i = 1;
 
-    r.db('GL5').table('matches').run().then(async(response) => {
+    r.db('GL5').table('matches').run().then(async (response) => {
         for (let match of response) {
             for (let l = 0; l < match.data.length; l++) {
                 let data = match.data[l];
@@ -270,51 +270,68 @@ async function filter_games(matches) {
     }
 }
 
-rl.on('line', async(input) => {
+async function update_done_matches() {
+    already_done = []
+    await r.db('GL5').table('matches').run().then(response => {
+        response.forEach(match => {
+            already_done.push(match.id);
+        });
+        console.log(response.length, "matches are in the database.");
+    });
+
+}
+
+async function parseTournament(t, log) {
+    match_fails = match_fails.filter(m => m != t);
+    let t_info = await getTournamentInfo(t);
+    let matches = await getMatches(t); //input.split(' ')[1]);
+    matches = matches.filter((match) => match.status == 'completed');
+    console.log("Found", matches.length, "completed matches.");
+    let i = 0;
+    for (let match of matches) {
+        i++;
+        
+        match.tournament_name = t_info.name;
+        match.tournament_id = t_info.id;
+        match.tournament_full_name = t_info.full_name;
+        if (match.status == 'completed') {
+            await parse_web(match, t);
+
+            await riot_call(match);
+            await r.db('GL5').table('matches').insert(match).run();
+        }
+        console.log(log + "Match " + i + "/" + matches.length);
+    }
+    await filter_games(matches);
+}
+
+rl.on('line', async (input) => {
     if (input === "open") {
         opn("http://localhost:3003", { app: 'chrome' });
     } else if (input == 'filter') {
         await r.db('GL5').table('playersFiltered').delete().run();
         filter_all_games();
     } else if (input.startsWith("t")) {
+        await update_done_matches();
+
         let tournaments = config.tournamentIds;
-        let z = 0;
+        let z = 1;
         for (let t of tournaments) {
-            let t_info = await getTournamentInfo(t);
-
-            let matches = await getMatches(t); //input.split(' ')[1]);
-            let new_matches = [];
-            matches = matches.filter((match) => match.status == 'completed')
-            console.log("Found", matches.length, "completed matches.");
-            let i = 0;
-            for (let match of matches) {
-                i++;
-                let already_parsed = true;
-                await r.db('GL5').table('matches').filter({ id: match.id }).run().then((response) => { if (response.length == 0) already_parsed = false });
-                if (already_parsed) {
-                    console.log("Match " + i + "/" + matches.length + " already parsed.");
-                    continue;
-                }
-                match.tournament_name = t_info.name;
-                match.tournament_id = t_info.id;
-                match.tournament_full_name = t_info.full_name;
-                if (match.status == 'completed') {
-                    await parse_web(match, t);
-
-                    await riot_call(match);
-                    r.db('GL5').table('matches').insert(match).run();
-                }
-                new_matches.push(match);
-                console.log("Match " + i + "/" + matches.length);
-            }
-            filter_games(new_matches);
+            await parseTournament(t, z + " ")
+            console.log("Finished tournament " + z + "/" + tournaments.length);
             z++;
-	    console.log("Finished tournament " + z + "/" + tournaments.length);
         }
-	while(z != tournaments.length){}
-	sleep(60*1000){
-
-	}
+        console.log("Waiting for the " + match_fails.length + " fails...");
+        await update_done_matches();
+        while (match_fails.length != 0) {
+            for (let c = 0; c < match_fails.length; c++)
+                await parseTournament(match_fails[c], "f" + c)
+        }
+    } else if (input.startsWith("delete")) {
+        await r.db('GL5').table('matches').delete().run();
+        await r.db('GL5').table('playersFiltered').delete().run();
+        await r.db('GL5').table('teams').delete().run();
+        console.log("Reset done.");
     }
 });
 
@@ -336,3 +353,4 @@ rl.on('line', async(input) => {
         }
     }
 });*/
+

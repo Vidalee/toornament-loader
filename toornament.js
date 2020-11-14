@@ -198,8 +198,8 @@ async function add_team_info(opponent, player) {
 async function add_player_info(identity, player_perf, match, i) {
     await r.db('GL5').table('playersFiltered').filter({ accountId: identity.accountId }).run().then(async(response) => {
         if (response.length == 0) {
-            identity.region = match.tournament_full_name.split('-')[1].trim();
-            identity.palier = match.tournament_full_name.split('-')[2].trim();
+            identity.region = match.tournament_name.split('-')[1].trim();
+            identity.palier = match.tournament_name.split('-')[2].trim();
             identity.summonerName = identity.summonerName.trim();
             let n = 0;
             if (player_perf.stats.win)

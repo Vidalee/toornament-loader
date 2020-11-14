@@ -11,6 +11,9 @@ const r = require("rethinkdbdash")({
     port: 28015,
     host: "localhost"
 });
+//r.db('GL5').table('matches').delete().run();
+//r.db('GL5').table('playersFiltered').delete().run();
+//r.db('GL5').table('teams').delete().run();
 const config = require("./config.json");
 
 const cookies = config.cookies;
@@ -21,7 +24,7 @@ const api_key = config.toornament_api_key;
 
 const riot_key = config.riot_key;
 const port = 3003;
-const callbackUrl = 'http://localhost:3003/callback';
+const callbackUrl = 'http://vivide.re:3003/callback';
 let token;
 const { AuthorizationCode } = require('simple-oauth2');
 const axios = require('axios');

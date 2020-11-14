@@ -11,9 +11,9 @@ const r = require("rethinkdbdash")({
     port: 28015,
     host: "localhost"
 });
-//r.db('GL5').table('matches').delete().run();
-//r.db('GL5').table('playersFiltered').delete().run();
-//r.db('GL5').table('teams').delete().run();
+r.db('GL5').table('matches').delete().run();
+r.db('GL5').table('playersFiltered').delete().run();
+r.db('GL5').table('teams').delete().run();
 const config = require("./config.json");
 
 const cookies = config.cookies;
@@ -45,7 +45,7 @@ app.get('/auth', (req, res) => {
     console.log(authorizationUri);
     res.redirect(authorizationUri);
 });
-
+let match_fails = [];
 // Callback service parsing the authorization token and asking for the access token
 app.get('/callback', async(req, res) => {
     const { code } = req.query;
@@ -125,6 +125,7 @@ async function getMatches(tournamentId) {
             array_max = parseInt(response.headers['content-range'].split('/')[1]);
             i += 100;
         } catch (e) {
+	    match_fails.push(tournamentId);
             console.log("Wrong permissions.", e);
             return;
         }
@@ -277,6 +278,7 @@ rl.on('line', async(input) => {
         filter_all_games();
     } else if (input.startsWith("t")) {
         let tournaments = config.tournamentIds;
+        let z = 0;
         for (let t of tournaments) {
             let t_info = await getTournamentInfo(t);
 
@@ -306,7 +308,13 @@ rl.on('line', async(input) => {
                 console.log("Match " + i + "/" + matches.length);
             }
             filter_games(new_matches);
+            z++;
+	    console.log("Finished tournament " + z + "/" + tournaments.length);
         }
+	while(z != tournaments.length){}
+	sleep(60*1000){
+
+	}
     }
 });
 

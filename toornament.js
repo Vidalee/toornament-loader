@@ -402,7 +402,6 @@ async function generate_statistics() {
                     champions[game.championId] += 1;
 
                 if (game.stats.largestMultiKill == 5) {
-                    console.log(player.summonerName);
                     stats.pentakills.players.push({ summonerName: player.summonerName, profileIcon: player.profileIcon });
                 }
                 stats.totalGoldSpent += game.stats.goldSpent;

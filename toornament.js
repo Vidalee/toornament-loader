@@ -452,7 +452,6 @@ async function generate_statistics() {
         }
         let max = 0;
         let champMax = 0;
-        console.log(champions);
         for (let key in champions) {
             if (champions[key] > max) {
                 max = champions[key];

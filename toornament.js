@@ -44,6 +44,10 @@ app.get('/auth', (req, res) => {
     console.log(authorizationUri);
     res.redirect(authorizationUri);
 });
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 let match_fails = [];
 let already_done = [];
 // Callback service parsing the authorization token and asking for the access token
@@ -90,7 +94,8 @@ async function getTournamentInfo(tournamentId) {
 
         return response.data
     } catch (e) {
-        console.log("Wrong permissions.", e);
+	
+        console.log("Wrong permissions.", e, response);
         return;
     }
 }
@@ -128,7 +133,7 @@ async function getMatches(tournamentId) {
             i += 100;
         } catch (e) {
             match_fails.push(tournamentId);
-            console.log("Wrong permissions.");
+            console.log("Wrong permissions.", e);
         }
     }
     return array;
@@ -173,7 +178,7 @@ async function riot_call(match) {
         }
         let matchId = match.links[i].split('/')[6];
         try {
-            let res = await axios.get(`https://euw1.api.riotgames.com/lol/match/v4/matches/${matchId}/by-tournament-code/${match.codes[i]}?api_key=${riot_key}`);
+	    let res = await axios.get(`https://euw1.api.riotgames.com/lol/match/v4/matches/${matchId}/by-tournament-code/${match.codes[i]}?api_key=${riot_key}`);
             match.data.push(res.data);
         } catch (error) {
             match.data.push(null);
@@ -184,6 +189,7 @@ let ranks = {};
 async function get_rank(summonerId) {
     if (ranks[summonerId])
         return ranks[summonerId]
+    await sleep(30);
     let res = await axios.get(`https://euw1.api.riotgames.com/lol/league/v4/entries/by-summoner/${summonerId}?api_key=${riot_key}`);
     let solo = res.data.filter(q => q.queueType == 'RANKED_SOLO_5x5');
     if (solo.length != 0) {
@@ -205,7 +211,7 @@ async function add_team_info(opponent, player) {
             if (response[0].players.filter((p) => p.accountId == player.accountId).length != 0) {
                 response[0].players.filter((p) => p.accountId == player.accountId)[0].summonerName = player.summonerName;
                 response[0].players.filter((p) => p.accountId == player.accountId)[0].soloRank = player.soloRank;
-
+                response[0].players.filter((p) => p.accountId == player.accountId)[0].profileIcon = player.profileIcon;
             } else
                 response[0].players.push(player)
             await r.db('GL5').table('teams').filter({ name: opponent.name }).update({ players: response[0].players }).run();
@@ -224,7 +230,7 @@ async function add_player_info(identity, player_perf, match, i) {
             if (player_perf.stats.win)
                 n = match.games[i].opponents.filter(op => op.result == 'win')[0].number;
             else
-                n = match.games[i].opponents.filter(op => op.result == 'loss')[0].number;
+                n = match.games[i].opponents.filter(op => op.result != 'win')[0].number;
             identity.participant = match.opponents.filter(op => op.number == n)[0].participant;
             identity.participant.region = identity.region;
             identity.soloRank = await get_rank(identity.summonerId);
@@ -233,14 +239,21 @@ async function add_player_info(identity, player_perf, match, i) {
             r.db('GL5').table('playersFiltered').insert(identity).run();
             await add_team_info(identity.participant, { summonerName: identity.summonerName, accountId: identity.accountId, profileIcon: identity.profileIcon, soloRank: identity.soloRank })
         } else {
-            if (response[0].games.filter((game) => game.gameId == match.gameId) != 0)
-                return;
+	//if(identity.summonerName != response[0].summonerName)
+//	    console.log(response[0].games[0].gameId, player_perf.gameId);//.filter((game) => game.gameId == match.gameId));
+            if (response[0].games.filter((game) => game.gameId == player_perf.gameId).length != 0){
+            	console.log("Game already in player's info.");
+		    return;
+	    }
             response[0].games.push(player_perf)
             await r.db('GL5').table('playersFiltered').filter({ accountId: identity.accountId }).update({
                 profileIcon: identity.profileIcon,
                 games: response[0].games,
+	        summonerName: identity.summonerName,
                 soloRank: await get_rank(identity.summonerId)
             }).run();
+
+	    await add_team_info(identity.participant, { summonerName: identity.summonerName, accountId: identity.accountId, profileIcon: identity.profileIcon, soloRank: identity.soloRank })
         }
     });
 }
@@ -354,6 +367,7 @@ async function inspect() {
 
 
 async function generate_statistics() {
+	console.log("euh2");
     let stats = {
         totalKills: 0,
         totalCS: 0,
@@ -386,6 +400,8 @@ async function generate_statistics() {
     };
     let champions = {};
     await r.db('GL5').table('playersFiltered').run().then(response => {
+		console.log("euh3");
+
         for (let player of response) {
             let kills = 0;
             let deaths = 0;
@@ -402,6 +418,7 @@ async function generate_statistics() {
                     champions[game.championId] += 1;
 
                 if (game.stats.largestMultiKill == 5) {
+		    console.log({ summonerName: player.summonerName, profileIcon: player.profileIcon });
                     stats.pentakills.players.push({ summonerName: player.summonerName, profileIcon: player.profileIcon });
                 }
                 stats.totalGoldSpent += game.stats.goldSpent;
@@ -422,7 +439,7 @@ async function generate_statistics() {
                 kda += (game.stats.kills + game.stats.assists) / (game.stats.deaths == 0 ? 1 : game.stats.deaths);
             }
             kda /= player.games.length;
-            if (kda > stats.kda.value) {
+            if (kda > stats.kda.value && player.games.length > 2) {
                 stats.kda.value = kda;
                 stats.kda.kills = kills / player.games.length;
                 stats.kda.deaths = deaths / player.games.length;
@@ -431,19 +448,19 @@ async function generate_statistics() {
                 stats.kda.profileIcon = player.profileIcon;
             }
             visionScore /= player.games.length;
-            if (visionScore > stats.visionScore.value) {
+            if (visionScore > stats.visionScore.value && player.games.length > 2) {
                 stats.visionScore.value = visionScore;
                 stats.visionScore.summonerName = player.summonerName;
                 stats.visionScore.profileIcon = player.profileIcon;
             }
             cs /= player.games.length;
-            if (cs > stats.cs.value) {
+            if (cs > stats.cs.value && player.games.length > 2) {
                 stats.cs.value = cs;
                 stats.cs.summonerName = player.summonerName;
                 stats.cs.profileIcon = player.profileIcon;
             }
             damages /= player.games.length;
-            if (damages > stats.damages.value) {
+            if (damages > stats.damages.value && player.games.length > 2) {
                 stats.damages.value = damages;
                 stats.damages.summonerName = player.summonerName;
                 stats.damages.profileIcon = player.profileIcon;
@@ -457,17 +474,26 @@ async function generate_statistics() {
                 champMax = key;
             }
         }
+	console.log(stats.pentakills.players.length);
         stats.popChampion = { id: champMax, value: max };
 
     });
+	let zz = 0;
     await r.db('GL5').table('matches').run().then(response => {
-        for (let match of response)
-            for (let game of match.data)
-                if (game)
+       	console.log(response.length);
+	 for (let match of response){
+            for (let game of match.data){
+            	zz++;
+			if (game){
+
                     stats.totalGames += 1;
+	        }
+	    }
+	}
     });
+	console.log(zz);
     await r.db('GL5').table('statistics').delete().run();
-    r.db('GL5').table('statistics').insert(stats).run();
+    await r.db('GL5').table('statistics').insert(stats).run();
 }
 
 
@@ -476,6 +502,7 @@ rl.on('line', async (input) => {
         opn("http://localhost:3003", { app: 'chrome' });
     } else if (input == 'filter') {
         await r.db('GL5').table('playersFiltered').delete().run();
+        await r.db('GL5').table('teams').delete().run();
         filter_all_games();
     } else if (input.startsWith("t")) {
         await update_done_matches();
@@ -502,6 +529,7 @@ rl.on('line', async (input) => {
         inspect();
 
     } else if (input.startsWith("stats")) {
+	console.log("euh");
         await generate_statistics();
         console.log("Statistics generated.");
     }

@@ -27,7 +27,13 @@ const callbackUrl = config.callbackUrl;
 let token;
 const { AuthorizationCode } = require('simple-oauth2');
 const axios = require('axios');
+const rateLimit = require('axios-rate-limit');
+const taxios = rateLimit(axios.create(), { maxRequests: 1, perMilliseconds: 1000, maxRPS: 1 })
+
+
+
 const { range, lowerFirst } = require('lodash');
+const { O_WRONLY } = require('constants');
 
 const client = new AuthorizationCode(config.oauth2);
 
@@ -88,14 +94,13 @@ async function getTournamentInfo(tournamentId) {
         url: 'https://api.toornament.com/organizer/v2/tournaments/' + tournamentId,
         headers: { 'X-Api-Key': api_key, 'Authorization': 'Bearer ' + token }
     }
-
     try {
-        const response = await axios(config);
+        const response = await taxios(config);
 
         return response.data
     } catch (e) {
 	
-        console.log("Wrong permissions.", e, response);
+        console.log("Wrong permissions.");
         return;
     }
 }
@@ -114,7 +119,9 @@ async function getMatches(tournamentId) {
                 url: 'https://api.toornament.com/organizer/v2/tournaments/' + tournamentId + '/matches',
                 headers: { 'X-Api-Key': api_key, 'Authorization': 'Bearer ' + token, 'Range': `matches=${i}-${i + 99}` }
             }
-            const response = await axios(config);
+            sleep(1000)
+            const response = await taxios(config);
+            console.log(response.data.length);
             for (let match of response.data) {
                 if (already_done.includes(match.id))
                     continue;
@@ -125,7 +132,8 @@ async function getMatches(tournamentId) {
                     url: `https://api.toornament.com/organizer/v2/tournaments/${tournamentId}/matches/${match.id}/games`,
                     headers: { 'X-Api-Key': api_key, 'Authorization': 'Bearer ' + token, 'Range': `games=0-49` }
                 }
-                const response_games = await axios(config_games);
+                sleep(1000)
+                const response_games = await taxios(config_games);
                 match.games = response_games.data;
                 array.push(match);
             }
@@ -133,7 +141,7 @@ async function getMatches(tournamentId) {
             i += 100;
         } catch (e) {
             match_fails.push(tournamentId);
-            console.log("Wrong permissions.", e);
+            console.log("Wrong permissions.");
         }
     }
     return array;
